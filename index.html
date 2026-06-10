@@ -103,7 +103,7 @@
   .notes-tool-btn { width: 32px; height: 32px; border-radius: 6px; border: 1px solid #dadce0; background: #fff; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; color: #3c4043; transition: background 0.1s; }
   .notes-tool-btn:hover { background: #f1f3f4; }
   .notes-tool-sep { width: 1px; height: 24px; background: #dadce0; margin: 0 4px; }
-  .notes-editor-wrap { flex: 1; overflow-y: auto; padding: 32px; }
+  .notes-editor-wrap { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 32px; }
   .notes-editor { max-width: 600px; outline: none; font-size: 15px; line-height: 1.8; color: #3c4043; min-height: 200px; }
   .notes-editor:empty:not(.focused)::before { content: attr(data-placeholder); color: #9aa0a6; pointer-events: none; }
   .notes-editor a { color: #1a73e8; }
@@ -113,7 +113,7 @@
   .notes-editor p { margin: 4px 0; }
 
   /* Todo */
-  .todo-view { flex: 1; overflow-y: auto; padding: 24px 32px; }
+  .todo-view { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 24px 32px; }
   .todo-section { margin-bottom: 36px; max-width: 640px; }
   .todo-section-title { font-size: 16px; font-weight: 600; color: #3c4043; margin-bottom: 14px; }
   .todo-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 4px; transition: background 0.1s; }
