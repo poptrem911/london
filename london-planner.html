@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>London 2026 — Reseplanerare</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Google Sans', 'Segoe UI', Roboto, Arial, sans-serif; background: #fff; color: #3c4043; overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; border-bottom: 1px solid #dadce0; background: #fff; flex-shrink: 0; }
+  .header h1 { font-size: 20px; font-weight: 400; color: #3c4043; }
+  .header h1 b { font-weight: 600; }
+  .header-subtitle { font-size: 13px; color: #70757a; }
+  .btn { padding: 8px 20px; border-radius: 20px; border: 1px solid #dadce0; background: #fff; color: #3c4043; font-size: 14px; cursor: pointer; font-family: inherit; transition: background 0.15s, box-shadow 0.15s; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { background: #f1f3f4; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .btn-primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .btn-primary:hover { background: #1765cc; }
+
+  /* Sync indicator */
+  #syncStatus { font-size: 12px; color: #70757a; display: flex; align-items: center; gap: 4px; }
+  #syncStatus.syncing { color: #f29900; }
+  #syncStatus.synced { color: #1e8e3e; }
+  #syncStatus.error { color: #d93025; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; padding: 0 20px; border-bottom: 1px solid #dadce0; background: #fff; flex-shrink: 0; }
+  .tab { padding: 10px 18px; font-size: 14px; font-weight: 500; color: #5f6368; border: none; background: none; cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -1px; font-family: inherit; transition: color 0.15s; }
+  .tab:hover { color: #1a73e8; background: #f8f9fa; border-radius: 6px 6px 0 0; }
+  .tab.active { color: #1a73e8; border-bottom-color: #1a73e8; }
+
+  /* Views */
+  .view { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+  .view.active { display: flex; }
+
+  /* Calendar */
+  .calendar-wrapper { flex: 1; display: flex; overflow: hidden; }
+  .time-gutter { width: 56px; flex-shrink: 0; border-right: 1px solid #dadce0; overflow-y: scroll; scrollbar-width: none; }
+  .time-gutter::-webkit-scrollbar { display: none; }
+  .time-gutter .gutter-spacer { height: 52px; border-bottom: 1px solid #dadce0; }
+  .time-gutter .time-label { height: 60px; display: flex; align-items: flex-start; justify-content: flex-end; padding-right: 8px; font-size: 10px; color: #70757a; transform: translateY(-6px); }
+  .days-container { flex: 1; display: flex; overflow: auto; position: relative; }
+  .days-container::-webkit-scrollbar { width: 8px; }
+  .days-container::-webkit-scrollbar-thumb { background: #dadce0; border-radius: 4px; }
+  .day-column { flex: 1; min-width: 140px; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; }
+  .day-column:last-child { border-right: none; }
+  .day-header { text-align: center; padding: 8px 0 6px; border-bottom: 1px solid #dadce0; flex-shrink: 0; position: sticky; top: 0; background: #fff; z-index: 20; }
+  .day-header .day-name { font-size: 11px; text-transform: uppercase; color: #70757a; letter-spacing: 0.5px; font-weight: 500; }
+  .day-header .day-number { font-size: 24px; font-weight: 400; color: #3c4043; margin-top: 2px; line-height: 1.2; }
+  .day-slots { position: relative; flex: 1; }
+  .hour-slot { height: 60px; border-bottom: 1px solid #f1f3f4; position: relative; }
+  .hour-slot::after { content: ''; position: absolute; top: 50%; left: 0; right: 0; border-bottom: 1px dotted #f1f3f4; }
+  .snap-indicator { position: absolute; left: 0; right: 0; height: 2px; background: #1a73e8; z-index: 50; pointer-events: none; display: none; box-shadow: 0 0 4px rgba(26,115,232,0.5); }
+  .snap-time-label { position: absolute; left: -54px; top: -8px; font-size: 10px; color: #1a73e8; font-weight: 600; background: #e8f0fe; padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+  .drag-preview { position: absolute; left: 4px; right: 4px; border-radius: 6px; z-index: 45; pointer-events: none; display: none; border: 2px dashed rgba(26,115,232,0.6); background: rgba(26,115,232,0.08); }
+  .activity-block { position: absolute; border-radius: 6px; padding: 4px 8px; cursor: grab; overflow: hidden; z-index: 10; font-size: 12px; line-height: 1.3; transition: box-shadow 0.15s; border: none; user-select: none; }
+  .activity-block:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 15; }
+  .activity-block:active { cursor: grabbing; }
+  .activity-block .act-title { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .activity-block .act-time { opacity: 0.85; font-size: 11px; }
+  .activity-block .act-location { opacity: 0.7; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
+  .resize-handle { position: absolute; bottom: 0; left: 0; right: 0; height: 8px; cursor: ns-resize; border-radius: 0 0 6px 6px; }
+  .drag-ghost { position: fixed; pointer-events: none; z-index: 9999; opacity: 0.85; border-radius: 6px; padding: 6px 10px; font-size: 12px; font-weight: 600; color: #fff; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+  .modal { background: #fff; border-radius: 12px; width: 540px; max-width: 95vw; max-height: 90vh; overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,0.2); }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px 12px; }
+  .modal-header input { font-size: 22px; font-weight: 400; border: none; outline: none; width: 100%; color: #3c4043; font-family: inherit; border-bottom: 2px solid transparent; padding: 4px 0; }
+  .modal-header input:focus { border-bottom-color: #1a73e8; }
+  .modal-close { background: none; border: none; font-size: 20px; color: #5f6368; cursor: pointer; padding: 4px 8px; border-radius: 50%; flex-shrink: 0; }
+  .modal-close:hover { background: #f1f3f4; }
+  .modal-body { padding: 0 24px 20px; }
+  .field { margin-bottom: 16px; }
+  .field label { display: block; font-size: 11px; font-weight: 500; color: #5f6368; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .field input, .field select, .field textarea { width: 100%; padding: 8px 12px; border: 1px solid #dadce0; border-radius: 8px; font-size: 14px; font-family: inherit; outline: none; color: #3c4043; }
+  .field input:focus, .field select:focus, .field textarea:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px #e8f0fe; }
+  .field textarea { resize: vertical; min-height: 80px; }
+  .field-row { display: flex; gap: 12px; }
+  .field-row .field { flex: 1; }
+  .color-picker { display: flex; gap: 6px; flex-wrap: wrap; }
+  .color-dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; transition: transform 0.1s; }
+  .color-dot:hover { transform: scale(1.15); }
+  .color-dot.active { border-color: #3c4043; box-shadow: 0 0 0 2px #fff, 0 0 0 4px #3c4043; }
+  .map-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: #1a73e8; cursor: pointer; background: none; border: none; font-family: inherit; margin-top: 6px; }
+  .map-toggle:hover { text-decoration: underline; }
+  .modal-footer { padding: 12px 24px 20px; display: flex; justify-content: space-between; border-top: 1px solid #f1f3f4; }
+  .hint { font-size: 11px; color: #70757a; margin-top: 4px; }
+
+  /* Map */
+  #mapContainer { flex: 1; height: 100%; }
+  .map-legend { position: absolute; bottom: 20px; left: 20px; background: white; border-radius: 8px; padding: 12px 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); z-index: 1000; max-height: 250px; overflow-y: auto; font-size: 13px; }
+  .map-legend-item { display: flex; align-items: center; gap: 8px; padding: 3px 0; cursor: pointer; }
+  .map-legend-item:hover { text-decoration: underline; }
+  .map-legend-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Notes */
+  .notes-toolbar { display: flex; gap: 4px; padding: 10px 20px; border-bottom: 1px solid #f1f3f4; background: #fff; flex-shrink: 0; flex-wrap: wrap; align-items: center; }
+  .notes-tool-btn { width: 32px; height: 32px; border-radius: 6px; border: 1px solid #dadce0; background: #fff; cursor: pointer; font-size: 14px; display: flex; align-items: center; justify-content: center; color: #3c4043; transition: background 0.1s; }
+  .notes-tool-btn:hover { background: #f1f3f4; }
+  .notes-tool-sep { width: 1px; height: 24px; background: #dadce0; margin: 0 4px; }
+  .notes-editor-wrap { flex: 1; overflow-y: auto; padding: 32px; }
+  .notes-editor { max-width: 600px; outline: none; font-size: 15px; line-height: 1.8; color: #3c4043; min-height: 200px; }
+  .notes-editor:empty:not(.focused)::before { content: attr(data-placeholder); color: #9aa0a6; pointer-events: none; }
+  .notes-editor a { color: #1a73e8; }
+  .notes-editor h1 { font-size: 22px; margin: 12px 0 6px; }
+  .notes-editor h2 { font-size: 17px; margin: 10px 0 4px; }
+  .notes-editor ul, .notes-editor ol { padding-left: 24px; margin: 6px 0; }
+  .notes-editor p { margin: 4px 0; }
+
+  /* Todo */
+  .todo-view { flex: 1; overflow-y: auto; padding: 24px 32px; }
+  .todo-section { margin-bottom: 36px; max-width: 640px; }
+  .todo-section-title { font-size: 16px; font-weight: 600; color: #3c4043; margin-bottom: 14px; }
+  .todo-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; margin-bottom: 4px; transition: background 0.1s; }
+  .todo-item:hover { background: #f8f9fa; }
+  .todo-item input[type=checkbox] { width: 17px; height: 17px; cursor: pointer; accent-color: #1a73e8; flex-shrink: 0; }
+  .todo-item .todo-text { flex: 1; font-size: 14px; border: none; outline: none; background: transparent; font-family: inherit; color: #3c4043; padding: 2px 0; }
+  .todo-item.done .todo-text { text-decoration: line-through; color: #9aa0a6; }
+  .todo-item .todo-del { opacity: 0; background: none; border: none; color: #9aa0a6; cursor: pointer; font-size: 16px; padding: 2px 6px; border-radius: 4px; }
+  .todo-item:hover .todo-del { opacity: 1; }
+  .todo-item .todo-del:hover { color: #d93025; background: #fce8e6; }
+  .todo-add-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; border-radius: 8px; cursor: pointer; color: #5f6368; font-size: 14px; margin-top: 6px; }
+  .todo-add-row:hover { background: #f8f9fa; color: #1a73e8; }
+  .todo-add-input { flex: 1; border: none; outline: none; font-size: 14px; font-family: inherit; background: transparent; color: #3c4043; }
+
+  /* Footer */
+  .footer { border-top: 1px solid #dadce0; padding: 6px 20px; display: flex; justify-content: center; gap: 32px; background: #fff; flex-shrink: 0; }
+  .footer span { font-size: 12px; color: #70757a; }
+
+  @media (max-width: 768px) {
+    .day-column { min-width: 100px; }
+    .header h1 { font-size: 16px; }
+    .activity-block { font-size: 11px; padding: 3px 6px; }
+    .footer { gap: 12px; flex-wrap: wrap; }
+    .notes-editor-wrap { padding: 16px; }
+    .todo-view { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>🇬🇧 <b>London</b> 2026</h1>
+    <div class="header-subtitle">26 juni – 30 juni · Reseplanerare</div>
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <span id="syncStatus">●</span>
+    <span id="actCount" style="font-size:13px;color:#70757a;"></span>
+    <button class="btn btn-primary" id="btnAddActivity" onclick="addNew()">+ Ny aktivitet</button>
+  </div>
+</div>
+
+<div class="tabs">
+  <button class="tab active" id="tab-calendar" onclick="switchTab('calendar')">📅 Kalender</button>
+  <button class="tab" id="tab-map" onclick="switchTab('map')">🗺️ Karta</button>
+  <button class="tab" id="tab-notes" onclick="switchTab('notes')">📝 Anteckningar</button>
+  <button class="tab" id="tab-todo" onclick="switchTab('todo')">✅ Att göra</button>
+</div>
+
+<!-- Calendar -->
+<div class="view active" id="view-calendar" style="flex-direction:row;">
+  <div class="calendar-wrapper">
+    <div class="time-gutter" id="timeGutter"></div>
+    <div class="days-container" id="daysContainer"></div>
+  </div>
+</div>
+
+<!-- Map -->
+<div class="view" id="view-map" style="position:relative;">
+  <div style="position:absolute;top:12px;right:16px;z-index:500;">
+    <select id="mapDayFilter" onchange="updateMapMarkers()" style="padding:6px 12px;border:1px solid #dadce0;border-radius:20px;font-size:13px;font-family:inherit;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,0.1);"></select>
+  </div>
+  <div id="missingNote" style="display:none;background:#fff8e1;color:#b45309;font-size:12px;padding:6px 16px;position:absolute;bottom:0;left:0;right:0;z-index:500;"></div>
+  <div id="mapContainer"></div>
+</div>
+
+<!-- Notes -->
+<div class="view" id="view-notes">
+  <div class="notes-toolbar">
+    <button class="notes-tool-btn" title="Fetstil" onclick="fmt('bold')"><b>B</b></button>
+    <button class="notes-tool-btn" title="Kursiv" onclick="fmt('italic')"><i>I</i></button>
+    <button class="notes-tool-btn" title="Understruken" onclick="fmt('underline')"><u>U</u></button>
+    <div class="notes-tool-sep"></div>
+    <button class="notes-tool-btn" onclick="fmt('formatBlock','h1')" style="font-size:11px;width:auto;padding:0 8px;">H1</button>
+    <button class="notes-tool-btn" onclick="fmt('formatBlock','h2')" style="font-size:11px;width:auto;padding:0 8px;">H2</button>
+    <div class="notes-tool-sep"></div>
+    <button class="notes-tool-btn" onclick="fmt('insertUnorderedList')">•≡</button>
+    <button class="notes-tool-btn" onclick="fmt('insertOrderedList')">1≡</button>
+    <div class="notes-tool-sep"></div>
+    <button class="notes-tool-btn" onclick="insertLink()" style="width:auto;padding:0 10px;font-size:12px;">🔗 Länk</button>
+    <button class="notes-tool-btn" onclick="fmt('removeFormat')" style="width:auto;padding:0 10px;font-size:12px;">✕ Format</button>
+  </div>
+  <div class="notes-editor-wrap">
+    <div class="notes-editor" id="notesEditor" contenteditable="true" spellcheck="true"
+      oninput="saveNotes()" onpaste="handlePaste(event)"
+      data-placeholder="Skriv dina anteckningar här..."></div>
+  </div>
+</div>
+
+<!-- Todo -->
+<div class="view" id="view-todo">
+  <div class="todo-view">
+    <div class="todo-section">
+      <div class="todo-section-title">📋 Att göra innan London</div>
+      <div id="todo-list-before"></div>
+      <div class="todo-add-row" onclick="focusAddTodo('before')">
+        <span style="font-size:18px;line-height:1;">＋</span>
+        <input class="todo-add-input" id="todo-input-before" placeholder="Lägg till uppgift..." onkeydown="todoKeydown(event,'before')" onblur="addTodoFromInput('before')" />
+      </div>
+    </div>
+    <div class="todo-section">
+      <div class="todo-section-title">🧳 Packlista</div>
+      <div id="todo-list-pack"></div>
+      <div class="todo-add-row" onclick="focusAddTodo('pack')">
+        <span style="font-size:18px;line-height:1;">＋</span>
+        <input class="todo-add-input" id="todo-input-pack" placeholder="Lägg till sak att packa..." onkeydown="todoKeydown(event,'pack')" onblur="addTodoFromInput('pack')" />
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer" id="calFooter">
+  <span>👆 Klicka på tid = ny aktivitet</span>
+  <span>✋ Dra block = flytta</span>
+  <span>👆 Klicka block = redigera</span>
+  <span>↕ Dra nederkant = ändra längd</span>
+</div>
+
+<!-- Edit modal -->
+<div class="modal-overlay" id="modal" style="display:none" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <input id="mTitle" placeholder="Aktivitetens namn" />
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="field-row">
+        <div class="field"><label>Dag</label><select id="mDate"></select></div>
+        <div class="field"><label>Starttid</label><select id="mStart"></select></div>
+        <div class="field"><label>Längd</label><select id="mDuration"></select></div>
+      </div>
+      <div class="field">
+        <label>Plats / adress</label>
+        <input id="mLocation" placeholder="T.ex. Tower of London, EC3N 4AB" />
+        <div style="margin-top:6px;">
+          <a id="mMapsLink" href="#" target="_blank" class="map-toggle" style="text-decoration:none;display:none;">🗺️ Öppna i Google Maps</a>
+        </div>
+      </div>
+      <div class="field">
+        <label>Koordinater (från Google Maps)</label>
+        <input id="mCoords" placeholder="T.ex. 51.5081, -0.0759" />
+        <div class="hint">Högerklicka en plats i Google Maps → kopiera koordinaterna</div>
+      </div>
+      <div class="field">
+        <label>Kollektivtrafik / transport</label>
+        <textarea id="mTransport" placeholder="T.ex. Tube: Central Line → Tower Hill" style="min-height:60px;"></textarea>
+      </div>
+      <div class="field"><label>Färg</label><div class="color-picker" id="mColors"></div></div>
+      <div class="field">
+        <label>Anteckningar</label>
+        <textarea id="mNotes" placeholder="Biljettpriser, öppettider, tips..."></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" style="color:#d93025;border-color:#fce8e6;background:#fce8e6;" onclick="deleteActivity()">Ta bort</button>
+      <button class="btn btn-primary" onclick="saveActivity()">Spara</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════
+// FIREBASE INIT
+// ══════════════════════════════════════
+const firebaseConfig = {
+  apiKey: "AIzaSyCmO59IjPeNxCrSmtBBii-QrM4LVgkA-NU",
+  authDomain: "london-reseplanerare.firebaseapp.com",
+  databaseURL: "https://london-reseplanerare-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "london-reseplanerare",
+  storageBucket: "london-reseplanerare.firebasestorage.app",
+  messagingSenderId: "776810085704",
+  appId: "1:776810085704:web:69d7840bb18016beb2c77d"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+function setSyncStatus(state) {
+  const el = document.getElementById('syncStatus');
+  el.className = state;
+  el.title = { syncing:'Sparar...', synced:'Synkad ✓', error:'Synkfel — kontrollera anslutning' }[state] || '';
+  el.textContent = state === 'synced' ? '● Synkad' : state === 'syncing' ? '● Sparar…' : '● Fel';
+}
+
+// ══════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════
+const DAYS = [
+  { date:'2026-06-26', name:'FRE', num:'26', label:'Fre 26 juni' },
+  { date:'2026-06-27', name:'LÖR', num:'27', label:'Lör 27 juni' },
+  { date:'2026-06-28', name:'SÖN', num:'28', label:'Sön 28 juni' },
+  { date:'2026-06-29', name:'MÅN', num:'29', label:'Mån 29 juni' },
+  { date:'2026-06-30', name:'TIS', num:'30', label:'Tis 30 juni' },
+];
+const START_HOUR = 8, END_HOUR = 23;
+const HOUR_PX = 60, SNAP_MIN = 15;
+const COLORS = ['#039be5','#33b679','#8e24aa','#e67c73','#f6bf26','#f4511e','#0b8043','#3f51b5','#d50000','#616161'];
+
+let activities = [], nextId = 1, editingId = null;
+let _ignoreRemoteUpdate = false; // prevent feedback loops
+
+// ── Sample data ──
+const SAMPLES = [
+  { title:'Tower of London', date:'2026-06-26', startMin:540, duration:150, color:'#039be5', location:'Tower of London, London EC3N 4AB', coords:'51.5081, -0.0759', transport:'Tube: Central/District Line → Tower Hill', notes:'Boka biljetter i förväg! Ca £33/person.\nPlanera minst 2-3 timmar.', lat:51.5081, lng:-0.0759 },
+  { title:'Borough Market', date:'2026-06-26', startMin:720, duration:90, color:'#33b679', location:'8 Southwark St, London SE1 1TL', coords:'51.5055, -0.0910', transport:'Promenad från Tower of London (~15 min via Tower Bridge)', notes:'Fantastisk matmarknad! Prova oststånd och paella.', lat:51.5055, lng:-0.0910 },
+  { title:'Tate Modern', date:'2026-06-26', startMin:870, duration:120, color:'#8e24aa', location:'Bankside, London SE1 9TG', coords:'51.5076, -0.0994', transport:'Promenad från Borough Market (~5 min)', notes:'Gratis inträde! Fantastisk modern konst.', lat:51.5076, lng:-0.0994 },
+  { title:'British Museum', date:'2026-06-27', startMin:600, duration:180, color:'#039be5', location:'Great Russell St, London WC1B 3DG', coords:'51.5194, -0.1270', transport:'Tube: Central/Piccadilly Line → Holborn', notes:'Gratis inträde! Rosetta Stone, egyptiska mumier.', lat:51.5194, lng:-0.1270 },
+  { title:'Camden Market', date:'2026-06-27', startMin:840, duration:120, color:'#f6bf26', location:'Camden Lock Place, London NW1 8AF', coords:'51.5414, -0.1427', transport:'Tube: Northern Line → Camden Town', notes:'Street food, vintage-kläder, musik.', lat:51.5414, lng:-0.1427 },
+  { title:'Westminster & Big Ben', date:'2026-06-28', startMin:540, duration:90, color:'#e67c73', location:'Westminster, London SW1A 0AA', coords:'51.4995, -0.1248', transport:'Tube: Jubilee/District/Circle Line → Westminster', notes:'Fotografera Big Ben & Parliament.', lat:51.4995, lng:-0.1248 },
+  { title:'London Eye', date:'2026-06-28', startMin:660, duration:60, color:'#8e24aa', location:'Riverside Building, County Hall, SE1 7PB', coords:'51.5033, -0.1195', transport:'Promenad från Westminster (~5 min)', notes:'Boka Fast Track-biljett! Ca £35/person.', lat:51.5033, lng:-0.1195 },
+  { title:'Buckingham Palace', date:'2026-06-28', startMin:780, duration:90, color:'#f4511e', location:'Buckingham Palace, London SW1A 1AA', coords:'51.5014, -0.1419', transport:'Promenad från London Eye (~20 min via St James\'s Park)', notes:'Vaktavlösning kl 11:00 (kontrollera datum).', lat:51.5014, lng:-0.1419 },
+  { title:'Notting Hill & Portobello', date:'2026-06-29', startMin:600, duration:150, color:'#33b679', location:'Portobello Road, London W11', coords:'51.5153, -0.2053', transport:'Tube: Central Line → Notting Hill Gate', notes:'Antikmarknad, färgglada hus, mysiga kaféer.', lat:51.5153, lng:-0.2053 },
+  { title:'Hyde Park', date:'2026-06-29', startMin:810, duration:90, color:'#0b8043', location:'Hyde Park, London W2 2UH', coords:'51.5073, -0.1657', transport:'Promenad från Notting Hill (~10 min)', notes:'Ta en promenad, hyr roddbåt på Serpentine.', lat:51.5073, lng:-0.1657 },
+  { title:'Shoreditch & Street Art', date:'2026-06-30', startMin:600, duration:120, color:'#f4511e', location:'Brick Lane, Shoreditch, London E1', coords:'51.5215, -0.0714', transport:'Tube: Hammersmith & City Line → Whitechapel', notes:'Street art-promenad, vintage-butiker.', lat:51.5215, lng:-0.0714 },
+  { title:'Sky Garden', date:'2026-06-30', startMin:780, duration:90, color:'#3f51b5', location:'20 Fenchurch St, London EC3M 3BY', coords:'51.5113, -0.0836', transport:'Tube: District/Circle Line → Monument', notes:'GRATIS men boka tid i förväg! Boka via skygarden.london', lat:51.5113, lng:-0.0836 },
+];
+
+// ══════════════════════════════════════
+// FIREBASE DATA LAYER
+// ══════════════════════════════════════
+function saveActivities() {
+  setSyncStatus('syncing');
+  _ignoreRemoteUpdate = true;
+  db.ref('activities').set(activities).then(() => {
+    db.ref('nextId').set(nextId);
+    setSyncStatus('synced');
+    setTimeout(() => { _ignoreRemoteUpdate = false; }, 500);
+  }).catch(() => { setSyncStatus('error'); _ignoreRemoteUpdate = false; });
+}
+
+function saveNotes() {
+  db.ref('notes').set(document.getElementById('notesEditor').innerHTML);
+}
+
+function saveTodos() {
+  db.ref('todos').set(todos);
+}
+
+function initFirebase() {
+  setSyncStatus('syncing');
+  // One-time read to check if data exists
+  db.ref('/').once('value').then(snap => {
+    const data = snap.val();
+    if (!data || !data.activities || data.activities.length === 0) {
+      // Seed with sample data
+      activities = SAMPLES.map((s, i) => ({ id: i + 1, ...s }));
+      nextId = activities.length + 1;
+      todos = {
+        before: TODO_DEFAULTS.before.map((text, i) => ({ id:'before'+i, text, done:false })),
+        pack:   TODO_DEFAULTS.pack.map((text, i) => ({ id:'pack'+i, text, done:false })),
+      };
+      db.ref('activities').set(activities);
+      db.ref('nextId').set(nextId);
+      db.ref('todos').set(todos);
+    } else {
+      activities = data.activities || [];
+      nextId = data.nextId || activities.length + 1;
+      todos = data.todos || { before:[], pack:[] };
+      if (data.notes) document.getElementById('notesEditor').innerHTML = data.notes;
+    }
+    buildCalendar();
+    renderActivities();
+    renderTodos('before');
+    renderTodos('pack');
+    setSyncStatus('synced');
+    setupRealtimeListeners();
+  }).catch(e => {
+    console.error(e);
+    setSyncStatus('error');
+  });
+}
+
+function setupRealtimeListeners() {
+  // Activities
+  db.ref('activities').on('value', snap => {
+    if (_ignoreRemoteUpdate) return;
+    const remote = snap.val();
+    if (remote) { activities = remote; renderActivities(); updateCount(); }
+  });
+  db.ref('nextId').on('value', snap => {
+    if (_ignoreRemoteUpdate) return;
+    if (snap.val()) nextId = snap.val();
+  });
+  // Notes
+  db.ref('notes').on('value', snap => {
+    const editor = document.getElementById('notesEditor');
+    if (snap.val() !== null && document.activeElement !== editor) {
+      editor.innerHTML = snap.val() || '';
+    }
+  });
+  // Todos
+  db.ref('todos').on('value', snap => {
+    if (_ignoreRemoteUpdate) return;
+    if (snap.val()) {
+      todos = snap.val();
+      renderTodos('before');
+      renderTodos('pack');
+    }
+  });
+}
+
+// ══════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════
+function minToTime(m) { return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0'); }
+function snapMin(m) { return Math.round(m/SNAP_MIN)*SNAP_MIN; }
+function minToY(m) { return ((m-START_HOUR*60)/60)*HOUR_PX; }
+function yToMin(y) { return snapMin(START_HOUR*60+(y/HOUR_PX)*60); }
+function updateCount() { document.getElementById('actCount').textContent = activities.length+' aktiviteter'; }
+function parseCoords(str) {
+  if (!str) return null;
+  const p = str.split(',').map(s => parseFloat(s.trim()));
+  return (p.length===2 && !isNaN(p[0]) && !isNaN(p[1])) ? { lat:p[0], lng:p[1] } : null;
+}
+
+// ══════════════════════════════════════
+// BUILD CALENDAR
+// ══════════════════════════════════════
+function buildCalendar() {
+  const gutter = document.getElementById('timeGutter');
+  if (gutter.children.length > 0) return; // already built
+  const spacer = document.createElement('div'); spacer.className='gutter-spacer'; gutter.appendChild(spacer);
+  for (let h=START_HOUR;h<END_HOUR;h++) {
+    const d=document.createElement('div'); d.className='time-label'; d.textContent=String(h).padStart(2,'0')+':00'; gutter.appendChild(d);
+  }
+  const container = document.getElementById('daysContainer');
+  DAYS.forEach(day => {
+    const col=document.createElement('div'); col.className='day-column'; col.dataset.date=day.date;
+    const hdr=document.createElement('div'); hdr.className='day-header';
+    hdr.innerHTML=`<div class="day-name">${day.name}</div><div class="day-number">${day.num}</div>`;
+    col.appendChild(hdr);
+    const slots=document.createElement('div'); slots.className='day-slots'; slots.dataset.date=day.date;
+    const snapLine=document.createElement('div'); snapLine.className='snap-indicator'; snapLine.innerHTML='<span class="snap-time-label"></span>'; slots.appendChild(snapLine);
+    const preview=document.createElement('div'); preview.className='drag-preview'; slots.appendChild(preview);
+    for (let h=START_HOUR;h<END_HOUR;h++) {
+      const slot=document.createElement('div'); slot.className='hour-slot'; slot.dataset.hour=h;
+      slot.addEventListener('click',(e)=>{ if(e.target!==slot)return; const r=slot.getBoundingClientRect(); addNew(day.date, h*60+snapMin((e.clientY-r.top)/HOUR_PX*60)); });
+      slots.appendChild(slot);
+    }
+    col.appendChild(slots); container.appendChild(col);
+  });
+  // Modal selects
+  const mDate=document.getElementById('mDate');
+  DAYS.forEach(d=>{ const o=document.createElement('option'); o.value=d.date; o.textContent=d.label; mDate.appendChild(o); });
+  const mStart=document.getElementById('mStart');
+  for(let m=START_HOUR*60;m<END_HOUR*60;m+=15){ const o=document.createElement('option'); o.value=m; o.textContent=minToTime(m); mStart.appendChild(o); }
+  const mDur=document.getElementById('mDuration');
+  [15,30,45,60,90,120,150,180,210,240,300,360,420,480].forEach(d=>{ const o=document.createElement('option'); o.value=d; const hrs=Math.floor(d/60),mins=d%60; o.textContent=hrs>0?`${hrs} tim${mins>0?` ${mins} min`:''}`:d+' min'; mDur.appendChild(o); });
+  const mColors=document.getElementById('mColors');
+  COLORS.forEach(c=>{ const dot=document.createElement('div'); dot.className='color-dot'; dot.style.background=c; dot.dataset.color=c; dot.onclick=()=>{ mColors.querySelectorAll('.color-dot').forEach(d=>d.classList.remove('active')); dot.classList.add('active'); }; mColors.appendChild(dot); });
+  // Map day filter
+  const mf=document.getElementById('mapDayFilter');
+  [{ date:'all',label:'Alla dagar' },...DAYS].forEach(d=>{ const o=document.createElement('option'); o.value=d.date; o.textContent=d.label; mf.appendChild(o); });
+  // Sync scroll
+  const dc=document.getElementById('daysContainer'), tg=document.getElementById('timeGutter');
+  dc.addEventListener('scroll',()=>{ tg.scrollTop=dc.scrollTop; });
+  tg.addEventListener('scroll',()=>{ dc.scrollTop=tg.scrollTop; });
+}
+
+// ══════════════════════════════════════
+// OVERLAP LAYOUT
+// ══════════════════════════════════════
+function computeLayout(dayActs) {
+  const sorted=[...dayActs].sort((a,b)=>a.startMin!==b.startMin?a.startMin-b.startMin:b.duration-a.duration);
+  const clusters=[], layout=new Map(); let cluster=[],clusterEnd=-1;
+  for(const act of sorted){ if(act.startMin>=clusterEnd){ if(cluster.length)clusters.push(cluster); cluster=[act]; clusterEnd=act.startMin+act.duration; } else { cluster.push(act); clusterEnd=Math.max(clusterEnd,act.startMin+act.duration); } }
+  if(cluster.length)clusters.push(cluster);
+  for(const grp of clusters){ const cols=[];
+    for(const act of grp){ let placed=false; for(let i=0;i<cols.length;i++){ if(act.startMin>=cols[i]){ cols[i]=act.startMin+act.duration; layout.set(act.id,{col:i,numCols:0}); placed=true; break; } } if(!placed){ cols.push(act.startMin+act.duration); layout.set(act.id,{col:cols.length-1,numCols:0}); } }
+    const nc=cols.length; for(const act of grp){ const l=layout.get(act.id); layout.set(act.id,{col:l.col,numCols:nc}); } }
+  return layout;
+}
+
+// ══════════════════════════════════════
+// RENDER ACTIVITIES
+// ══════════════════════════════════════
+function renderActivities() {
+  document.querySelectorAll('.activity-block').forEach(el=>el.remove());
+  const byDay={};
+  activities.forEach(act=>{ if(!byDay[act.date])byDay[act.date]=[]; byDay[act.date].push(act); });
+  activities.forEach(act=>{
+    const slots=document.querySelector(`.day-slots[data-date="${act.date}"]`); if(!slots)return;
+    const layout=computeLayout(byDay[act.date]); const info=layout.get(act.id)||{col:0,numCols:1};
+    const GAP=3, colW=100/info.numCols, leftPct=info.col*colW, rightPct=100-leftPct-colW;
+    const block=document.createElement('div'); block.className='activity-block'; block.dataset.id=act.id;
+    const top=minToY(act.startMin), height=(act.duration/60)*HOUR_PX;
+    block.style.top=top+'px'; block.style.height=Math.max(height,20)+'px';
+    block.style.left=`calc(${leftPct}% + ${GAP}px)`; block.style.right=`calc(${rightPct}% + ${GAP}px)`; block.style.width='auto';
+    block.style.background=act.color; block.style.color='#fff';
+    block.innerHTML=`<div class="act-title">${act.title}</div><div class="act-time">${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}</div>${height>50&&act.location?`<div class="act-location">📍 ${act.location.split(',')[0]}</div>`:''}<div class="resize-handle"></div>`;
+    block.addEventListener('click',e=>{ e.stopPropagation(); if(e.target.classList.contains('resize-handle')||block.dataset.wasDragged==='true')return; openModal(act.id); });
+    setupDrag(block,act,slots);
+    setupResize(block,act);
+    slots.appendChild(block);
+  });
+  updateCount();
+}
+
+// ══════════════════════════════════════
+// DRAG
+// ══════════════════════════════════════
+function setupDrag(block,act,origSlots) {
+  let isDragging=false,startX,startY,ghostEl,dragOffsetMin;
+  block.addEventListener('mousedown',e=>{
+    if(e.target.classList.contains('resize-handle'))return; e.preventDefault();
+    block.dataset.wasDragged='false'; isDragging=false; startX=e.clientX; startY=e.clientY;
+    const br=block.getBoundingClientRect(); dragOffsetMin=(e.clientY-br.top)/HOUR_PX*60;
+    const onMove=e2=>{
+      if(!isDragging&&(Math.abs(e2.clientX-startX)>4||Math.abs(e2.clientY-startY)>4)){
+        isDragging=true; block.dataset.wasDragged='true';
+        ghostEl=document.createElement('div'); ghostEl.className='drag-ghost';
+        ghostEl.style.width=block.offsetWidth+'px'; ghostEl.style.height=Math.min(block.offsetHeight,50)+'px';
+        ghostEl.style.background=act.color; ghostEl.innerHTML=`<strong>${act.title}</strong>`;
+        document.body.appendChild(ghostEl); block.style.opacity='0.25';
+      }
+      if(!isDragging)return;
+      ghostEl.style.left=(e2.clientX+12)+'px'; ghostEl.style.top=(e2.clientY-12)+'px';
+      hideAllPreviews();
+      const el=document.elementFromPoint(e2.clientX,e2.clientY); if(!el)return;
+      const ts=el.closest('.day-slots'); if(!ts)return;
+      const r=ts.getBoundingClientRect(), y=e2.clientY-r.top-(dragOffsetMin/60*HOUR_PX);
+      const snapped=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration));
+      const sl=ts.querySelector('.snap-indicator'); sl.style.display='block'; sl.style.top=minToY(snapped)+'px'; sl.querySelector('.snap-time-label').textContent=minToTime(snapped);
+      const pv=ts.querySelector('.drag-preview'); pv.style.display='block'; pv.style.top=minToY(snapped)+'px'; pv.style.height=(act.duration/60*HOUR_PX)+'px';
+    };
+    const onUp=e2=>{
+      document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); hideAllPreviews();
+      if(isDragging){
+        if(ghostEl){ghostEl.remove();ghostEl=null;} block.style.opacity='1';
+        const el=document.elementFromPoint(e2.clientX,e2.clientY);
+        if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(), y=e2.clientY-r.top-(dragOffsetMin/60*HOUR_PX); act.date=ts.dataset.date; act.startMin=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); saveActivities(); renderActivities(); } }
+      }
+      isDragging=false; setTimeout(()=>{block.dataset.wasDragged='false';},50);
+    };
+    document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
+  });
+  // Touch
+  let td=false,tsx,tsy;
+  block.addEventListener('touchstart',e=>{ if(e.target.classList.contains('resize-handle'))return; td=false; tsx=e.touches[0].clientX; tsy=e.touches[0].clientY; const br=block.getBoundingClientRect(); dragOffsetMin=(e.touches[0].clientY-br.top)/HOUR_PX*60; },{passive:true});
+  block.addEventListener('touchmove',e=>{
+    if(!td&&(Math.abs(e.touches[0].clientX-tsx)>8||Math.abs(e.touches[0].clientY-tsy)>8)){td=true;block.style.opacity='0.3';}
+    if(td){ e.preventDefault(); hideAllPreviews(); const el=document.elementFromPoint(e.touches[0].clientX,e.touches[0].clientY); if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=e.touches[0].clientY-r.top-(dragOffsetMin/60*HOUR_PX); const sn=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); const sl=ts.querySelector('.snap-indicator'); sl.style.display='block'; sl.style.top=minToY(sn)+'px'; sl.querySelector('.snap-time-label').textContent=minToTime(sn); const pv=ts.querySelector('.drag-preview'); pv.style.display='block'; pv.style.top=minToY(sn)+'px'; pv.style.height=(act.duration/60*HOUR_PX)+'px'; } } }
+  },{passive:false});
+  block.addEventListener('touchend',e=>{ hideAllPreviews(); if(td){ block.style.opacity='1'; const t=e.changedTouches[0],el=document.elementFromPoint(t.clientX,t.clientY); if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=t.clientY-r.top-(dragOffsetMin/60*HOUR_PX); act.date=ts.dataset.date; act.startMin=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); saveActivities(); renderActivities(); } } td=false; } else { openModal(act.id); } });
+}
+
+function setupResize(block,act) {
+  const handle=block.querySelector('.resize-handle');
+  handle.addEventListener('mousedown',e=>{ e.preventDefault(); e.stopPropagation(); const sy=e.clientY,od=act.duration;
+    const onMove=e2=>{ const dMin=snapMin((e2.clientY-sy)/HOUR_PX*60); act.duration=Math.max(15,od+dMin); block.style.height=Math.max(act.duration/60*HOUR_PX,20)+'px'; block.querySelector('.act-time').textContent=`${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}`; };
+    const onUp=()=>{ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); saveActivities(); renderActivities(); };
+    document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
+  });
+}
+
+function hideAllPreviews() { document.querySelectorAll('.snap-indicator').forEach(e=>e.style.display='none'); document.querySelectorAll('.drag-preview').forEach(e=>e.style.display='none'); }
+
+// ══════════════════════════════════════
+// MODAL
+// ══════════════════════════════════════
+function openModal(id) {
+  const act=activities.find(a=>a.id===id); if(!act)return; editingId=id;
+  document.getElementById('mTitle').value=act.title;
+  document.getElementById('mDate').value=act.date;
+  document.getElementById('mStart').value=act.startMin;
+  document.getElementById('mDuration').value=act.duration;
+  document.getElementById('mLocation').value=act.location||'';
+  document.getElementById('mCoords').value=act.coords||'';
+  document.getElementById('mTransport').value=act.transport||'';
+  document.getElementById('mNotes').value=act.notes||'';
+  document.querySelectorAll('.color-dot').forEach(d=>d.classList.toggle('active',d.dataset.color===act.color));
+  updateMapLink();
+  document.getElementById('modal').style.display='flex';
+  document.getElementById('mTitle').focus();
+}
+function closeModal() { document.getElementById('modal').style.display='none'; editingId=null; }
+
+function saveActivity() {
+  const act=activities.find(a=>a.id===editingId); if(!act)return;
+  act.title=document.getElementById('mTitle').value||'Ny aktivitet';
+  act.date=document.getElementById('mDate').value;
+  act.startMin=parseInt(document.getElementById('mStart').value);
+  act.duration=parseInt(document.getElementById('mDuration').value);
+  act.location=document.getElementById('mLocation').value;
+  act.coords=document.getElementById('mCoords').value;
+  act.transport=document.getElementById('mTransport').value;
+  act.notes=document.getElementById('mNotes').value;
+  const c=parseCoords(act.coords); if(c){act.lat=c.lat;act.lng=c.lng;} else { act.lat=null;act.lng=null; }
+  if(!act.lat&&act.location) geocodeLocation(act);
+  const ac=document.querySelector('.color-dot.active'); if(ac)act.color=ac.dataset.color;
+  saveActivities(); renderActivities(); closeModal();
+}
+
+function deleteActivity() {
+  if(!editingId||!confirm('Ta bort denna aktivitet?'))return;
+  activities=activities.filter(a=>a.id!==editingId);
+  saveActivities(); renderActivities(); closeModal();
+}
+
+function addNew(date,startMin) {
+  const act={id:nextId++,title:'Ny aktivitet',date:date||DAYS[0].date,startMin:startMin||600,duration:90,color:COLORS[Math.floor(Math.random()*COLORS.length)],location:'',coords:'',transport:'',notes:'',lat:null,lng:null};
+  activities.push(act); saveActivities(); renderActivities(); openModal(act.id);
+}
+
+function updateMapLink() {
+  const coords=document.getElementById('mCoords').value, loc=document.getElementById('mLocation').value, link=document.getElementById('mMapsLink');
+  const c=parseCoords(coords);
+  if(c){link.href=`https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}`;link.style.display='inline-flex';}
+  else if(loc){link.href=`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(loc)}`;link.style.display='inline-flex';}
+  else{link.style.display='none';}
+}
+['mLocation','mCoords'].forEach(id=>document.getElementById(id).addEventListener('input',updateMapLink));
+
+async function geocodeLocation(act) {
+  try {
+    const q=act.location.includes('London')?act.location:act.location+', London';
+    const res=await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`,{headers:{'Accept-Language':'en'}});
+    const data=await res.json();
+    if(data&&data.length>0){ act.lat=parseFloat(data[0].lat); act.lng=parseFloat(data[0].lon); saveActivities(); if(leafletMap&&document.getElementById('view-map').classList.contains('active'))updateMapMarkers(); }
+  } catch(e){ console.warn('Geocoding failed',e); }
+}
+
+// ══════════════════════════════════════
+// MAP
+// ══════════════════════════════════════
+let leafletMap=null, mapMarkers=[], hotelMarker=null;
+const HOTEL={ name:'The Reem Hotel', address:'50-51 Princess Square, Bayswater, London W2 4PX', lat:51.5115, lng:-0.1876 };
+
+function initOrRefreshMap() {
+  if(!leafletMap){
+    leafletMap=L.map('mapContainer').setView([51.509,-0.118],13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors',maxZoom:19}).addTo(leafletMap);
+  }
+  setTimeout(()=>{ leafletMap.invalidateSize(); updateMapMarkers(); },80);
+}
+
+function addHotelMarker() {
+  if(hotelMarker)return;
+  const icon=L.divIcon({className:'',html:`<div style="background:#1a1a2e;color:#fff;padding:5px 12px;border-radius:6px;font-size:12px;font-weight:700;white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.4);font-family:inherit;border:2px solid #f0c040;display:flex;align-items:center;gap:5px;">🏨 The Reem Hotel</div><div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid #1a1a2e;margin:0 auto;"></div>`,iconSize:null,iconAnchor:[75,42]});
+  hotelMarker=L.marker([HOTEL.lat,HOTEL.lng],{icon,zIndexOffset:1000}).addTo(leafletMap);
+  hotelMarker.bindPopup(`<div style="font-family:inherit;min-width:180px;"><strong style="font-size:15px;">🏨 ${HOTEL.name}</strong><div style="color:#5f6368;font-size:12px;margin-top:4px;">📍 ${HOTEL.address}</div><div style="margin-top:6px;"><a href="https://www.google.com/maps/search/?api=1&query=${HOTEL.lat},${HOTEL.lng}" target="_blank" style="font-size:12px;color:#1a73e8;">Öppna i Google Maps</a></div></div>`,{maxWidth:260});
+}
+
+function updateMapMarkers() {
+  if(!leafletMap)return;
+  mapMarkers.forEach(m=>leafletMap.removeLayer(m)); mapMarkers=[];
+  addHotelMarker();
+  document.querySelectorAll('.map-legend').forEach(el=>el.remove());
+  const filter=document.getElementById('mapDayFilter').value;
+  const filtered=activities.filter(a=>{ if(!a.lat||!a.lng)return false; if(filter!=='all'&&a.date!==filter)return false; return true; });
+  const missing=activities.filter(a=>{ if(filter!=='all'&&a.date!==filter)return false; return !a.lat||!a.lng; });
+  const mn=document.getElementById('missingNote');
+  if(missing.length>0){mn.textContent=`⚠️ ${missing.length} aktivitet${missing.length>1?'er':''} saknar plats: ${missing.map(a=>a.title).join(', ')}`;mn.style.display='block';}
+  else{mn.style.display='none';}
+  if(filtered.length===0)return;
+  const bounds=[], legendDiv=document.createElement('div'); legendDiv.className='map-legend';
+  filtered.forEach(act=>{
+    const dayInfo=DAYS.find(d=>d.date===act.date), dayLabel=dayInfo?dayInfo.label.split(' ')[0]:'';
+    const icon=L.divIcon({className:'',html:`<div style="background:${act.color};color:#fff;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,0.25);font-family:inherit;border:2px solid #fff;display:flex;align-items:center;gap:4px;"><span style="font-size:10px;opacity:0.8;">${dayLabel}</span> ${act.title}</div><div style="width:0;height:0;border-left:8px solid transparent;border-right:8px solid transparent;border-top:8px solid ${act.color};margin:0 auto;"></div>`,iconSize:null,iconAnchor:[60,42]});
+    const marker=L.marker([act.lat,act.lng],{icon}).addTo(leafletMap);
+    marker.bindPopup(`<div style="font-family:inherit;min-width:200px;"><strong style="font-size:15px;color:${act.color};">${act.title}</strong><div style="color:#5f6368;font-size:12px;margin:4px 0;">${dayInfo?dayInfo.label:''} · ${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}</div>${act.location?`<div style="font-size:13px;margin:4px 0;">📍 ${act.location}</div>`:''}${act.transport?`<div style="font-size:12px;color:#5f6368;">🚇 ${act.transport.split('\n')[0]}</div>`:''}</div>`,{maxWidth:300});
+    mapMarkers.push(marker); bounds.push([act.lat,act.lng]);
+    const item=document.createElement('div'); item.className='map-legend-item';
+    item.innerHTML=`<span class="map-legend-dot" style="background:${act.color}"></span><span>${dayLabel} ${act.title}</span>`;
+    item.onclick=()=>{ leafletMap.setView([act.lat,act.lng],16); marker.openPopup(); };
+    legendDiv.appendChild(item);
+  });
+  document.getElementById('mapContainer').appendChild(legendDiv);
+  if(bounds.length>1)leafletMap.fitBounds(bounds,{padding:[60,60]});
+  else if(bounds.length===1)leafletMap.setView(bounds[0],15);
+}
+
+// ══════════════════════════════════════
+// TABS
+// ══════════════════════════════════════
+function switchTab(name) {
+  ['calendar','map','notes','todo'].forEach(t=>{
+    document.getElementById('tab-'+t).classList.toggle('active',t===name);
+    document.getElementById('view-'+t).classList.toggle('active',t===name);
+  });
+  document.getElementById('calFooter').style.display=name==='calendar'?'flex':'none';
+  document.getElementById('btnAddActivity').style.display=name==='calendar'?'inline-flex':'none';
+  if(name==='map')initOrRefreshMap();
+  if(name==='notes')document.getElementById('notesEditor').focus();
+}
+
+// ══════════════════════════════════════
+// NOTES
+// ══════════════════════════════════════
+function fmt(cmd,val){ document.getElementById('notesEditor').focus(); document.execCommand(cmd,false,val||null); saveNotes(); }
+function insertLink(){ const url=prompt('Klistra in URL:'); if(!url)return; const sel=window.getSelection().toString()||url; document.getElementById('notesEditor').focus(); document.execCommand('insertHTML',false,`<a href="${url}" target="_blank">${sel}</a>`); saveNotes(); }
+function handlePaste(e){ const text=e.clipboardData.getData('text/plain'); if(text&&/^https?:\/\//i.test(text.trim())){ e.preventDefault(); const sel=window.getSelection().toString()||text; document.execCommand('insertHTML',false,`<a href="${text.trim()}" target="_blank">${sel}</a>`); saveNotes(); } }
+const notesEditor=document.getElementById('notesEditor');
+notesEditor.addEventListener('focus',()=>notesEditor.classList.add('focused'));
+notesEditor.addEventListener('blur',()=>notesEditor.classList.remove('focused'));
+
+// ══════════════════════════════════════
+// TODOS
+// ══════════════════════════════════════
+const TODO_SECTIONS=['before','pack'];
+let todos={ before:[], pack:[] };
+const TODO_DEFAULTS={
+  before:['Boka flygbiljetter','Boka hotell','Skaffa reseförsäkring','Ladda ner London Tube-karta','Skaffa Oyster Card','Boka Tower of London-biljetter','Boka London Eye-biljetter'],
+  pack:['Pass / ID-kort','Bokningsbekräftelser','Reseadapter (UK typ G)','Laddare & powerbank','Regnkläder / paraply','Bekväma promenadskor','Toalettsaker','Kamera']
+};
+
+function renderTodos(section) {
+  const list=document.getElementById('todo-list-'+section); list.innerHTML='';
+  (todos[section]||[]).forEach(item=>{
+    const row=document.createElement('div'); row.className='todo-item'+(item.done?' done':''); row.dataset.id=item.id;
+    const cb=document.createElement('input'); cb.type='checkbox'; cb.checked=item.done;
+    cb.onchange=()=>{ item.done=cb.checked; row.classList.toggle('done',item.done); _ignoreRemoteUpdate=true; saveTodos(); setTimeout(()=>_ignoreRemoteUpdate=false,500); };
+    const inp=document.createElement('input'); inp.type='text'; inp.className='todo-text'; inp.value=item.text;
+    inp.onchange=()=>{ item.text=inp.value; _ignoreRemoteUpdate=true; saveTodos(); setTimeout(()=>_ignoreRemoteUpdate=false,500); };
+    inp.onkeydown=e=>{ if(e.key==='Enter'){e.preventDefault();focusAddTodo(section);} };
+    const del=document.createElement('button'); del.className='todo-del'; del.innerHTML='✕';
+    del.onclick=()=>{ todos[section]=todos[section].filter(t=>t.id!==item.id); _ignoreRemoteUpdate=true; saveTodos(); renderTodos(section); setTimeout(()=>_ignoreRemoteUpdate=false,500); };
+    row.appendChild(cb); row.appendChild(inp); row.appendChild(del); list.appendChild(row);
+  });
+}
+
+function focusAddTodo(section){ document.getElementById('todo-input-'+section).focus(); }
+function addTodoFromInput(section){ const inp=document.getElementById('todo-input-'+section); const text=inp.value.trim(); if(!text)return; todos[section].push({id:section+'_'+Date.now(),text,done:false}); _ignoreRemoteUpdate=true; saveTodos(); renderTodos(section); inp.value=''; setTimeout(()=>_ignoreRemoteUpdate=false,500); }
+function todoKeydown(e,section){ if(e.key==='Enter'){e.preventDefault();addTodoFromInput(section);} if(e.key==='Escape')document.getElementById('todo-input-'+section).value=''; }
+
+// ══════════════════════════════════════
+// KEYBOARD
+// ══════════════════════════════════════
+document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&document.getElementById('modal').style.display!=='none')closeModal(); });
+
+// ══════════════════════════════════════
+// START
+// ══════════════════════════════════════
+initFirebase();
+</script>
+</body>
+</html>
