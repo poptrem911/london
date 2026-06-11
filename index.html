@@ -535,22 +535,12 @@ function renderActivities() {
     block.style.left=`calc(${leftPct}% + ${GAP}px)`; block.style.right=`calc(${rightPct}% + ${GAP}px)`; block.style.width='auto';
     block.style.background=act.color; block.style.color='#fff';
     block.innerHTML=`<div class="act-title">${act.title}</div><div class="act-time">${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}</div>${height>50&&act.location?`<div class="act-location">📍 ${act.location.split(',')[0]}</div>`:''}<div class="resize-handle"></div>`;
-    // Desktop: enkelklick. Mobil: dubbeltapp.
-    let lastTap=0;
+    // Desktop: enkelklick
     block.addEventListener('click',e=>{
       e.stopPropagation();
       if(e.target.classList.contains('resize-handle')||block.dataset.wasDragged==='true'||block.dataset.wasResized==='true')return;
-      if('ontouchstart' in window) return; // hanteras av touchend
+      if('ontouchstart' in window) return;
       openModal(act.id);
-    });
-    block.addEventListener('touchend',e=>{
-      if(block.dataset.wasResized==='true'){ block.dataset.wasResized='false'; return; }
-      if(block.dataset.wasDragged==='true') return;
-      if(!tdReady && !td){
-        const now=Date.now();
-        if(now-lastTap<350){ openModal(act.id); lastTap=0; }
-        else { lastTap=now; }
-      }
     });
     setupDrag(block,act,slots);
     setupResize(block,act);
@@ -563,7 +553,7 @@ function renderActivities() {
 // DRAG
 // ══════════════════════════════════════
 function setupDrag(block,act,origSlots) {
-  let isDragging=false,startX,startY,ghostEl,dragOffsetMin;
+  let isDragging=false,startX,startY,ghostEl,dragOffsetMin,lastTap=0;
   block.addEventListener('mousedown',e=>{
     if(e.target.classList.contains('resize-handle'))return; e.preventDefault();
     block.dataset.wasDragged='false'; isDragging=false; startX=e.clientX; startY=e.clientY;
@@ -630,10 +620,16 @@ function setupDrag(block,act,origSlots) {
     clearTimeout(lpTimer);
     block.style.transform=''; block.style.boxShadow=''; block.style.zIndex='';
     hideAllPreviews();
-    if(td){
+    if (td) {
+      // Avsluta drag
       const t=e.changedTouches[0],el=document.elementFromPoint(t.clientX,t.clientY);
       if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=t.clientY-r.top-(dragOffsetMin/60*HOUR_PX); act.date=ts.dataset.date; act.startMin=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); saveActivities(); renderActivities(); } }
       td=false;
+    } else if (!tdReady && block.dataset.wasResized!=='true') {
+      // Dubbeltapp för att öppna
+      const now=Date.now();
+      if (now-lastTap<350) { openModal(act.id); lastTap=0; }
+      else { lastTap=now; }
     }
     tdReady=false;
   });
