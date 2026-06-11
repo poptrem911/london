@@ -132,6 +132,21 @@
   .footer { border-top: 1px solid #dadce0; padding: 6px 20px; display: flex; justify-content: center; gap: 32px; background: #fff; flex-shrink: 0; }
   .footer span { font-size: 12px; color: #70757a; }
 
+  /* Landskapsläge på mobil */
+  @media (max-height: 500px) and (orientation: landscape) {
+    .header { padding: 3px 12px; }
+    .header h1 { font-size: 14px; }
+    .tabs { min-height: 0; }
+    .tab { padding: 4px 12px; font-size: 11px; }
+    .day-header { padding: 2px 0 1px; }
+    .day-header .day-name { font-size: 8px; }
+    .day-header .day-number { font-size: 12px; }
+    .gutter-spacer { height: 29px !important; }
+    .time-gutter .time-label { height: 45px; font-size: 8px; }
+    .hour-slot { height: 45px; }
+    .snap-indicator { top: revert; }
+  }
+
   @media (max-width: 768px) {
     .header { padding: 6px 12px; }
     .header h1 { font-size: 16px; }
@@ -460,7 +475,13 @@ function buildCalendar() {
     const preview=document.createElement('div'); preview.className='drag-preview'; slots.appendChild(preview);
     for (let h=START_HOUR;h<END_HOUR;h++) {
       const slot=document.createElement('div'); slot.className='hour-slot'; slot.dataset.hour=h;
-      slot.addEventListener('click',(e)=>{ if(e.target!==slot)return; const r=slot.getBoundingClientRect(); addNew(day.date, h*60+snapMin((e.clientY-r.top)/HOUR_PX*60)); });
+      // Desktop: enkelklick
+      slot.addEventListener('click',(e)=>{ if(e.target!==slot||e.detail===0)return; if('ontouchstart' in window)return; const r=slot.getBoundingClientRect(); addNew(day.date, h*60+snapMin((e.clientY-r.top)/HOUR_PX*60)); });
+      // Mobil: lång tryckning (500ms) för att lägga till aktivitet
+      let slotLp=null;
+      slot.addEventListener('touchstart',e=>{ if(e.target!==slot)return; const t=e.touches[0]; slotLp=setTimeout(()=>{ if(navigator.vibrate)navigator.vibrate(40); const r=slot.getBoundingClientRect(); addNew(day.date, h*60+snapMin((t.clientY-r.top)/HOUR_PX*60)); },500); },{passive:true});
+      slot.addEventListener('touchend',()=>clearTimeout(slotLp));
+      slot.addEventListener('touchmove',()=>clearTimeout(slotLp));
       slots.appendChild(slot);
     }
     col.appendChild(slots); container.appendChild(col);
@@ -608,11 +629,29 @@ function setupDrag(block,act,origSlots) {
 
 function setupResize(block,act) {
   const handle=block.querySelector('.resize-handle');
+  // Mus
   handle.addEventListener('mousedown',e=>{ e.preventDefault(); e.stopPropagation(); const sy=e.clientY,od=act.duration;
     const onMove=e2=>{ const dMin=snapMin((e2.clientY-sy)/HOUR_PX*60); act.duration=Math.max(15,od+dMin); block.style.height=Math.max(act.duration/60*HOUR_PX,20)+'px'; block.querySelector('.act-time').textContent=`${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}`; };
     const onUp=()=>{ document.removeEventListener('mousemove',onMove); document.removeEventListener('mouseup',onUp); saveActivities(); renderActivities(); };
     document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
   });
+  // Touch — lång tryckning på handtaget aktiverar resize
+  let resizeLp=null, resizeReady=false;
+  handle.addEventListener('touchstart',e=>{ e.stopPropagation();
+    resizeReady=false;
+    resizeLp=setTimeout(()=>{ resizeReady=true; handle.style.background='rgba(255,255,255,0.5)'; if(navigator.vibrate)navigator.vibrate(30); },400);
+  },{passive:true});
+  handle.addEventListener('touchmove',e=>{
+    if(!resizeReady)return;
+    e.preventDefault(); e.stopPropagation();
+    const sy0=block.getBoundingClientRect().bottom-(act.duration/60*HOUR_PX);
+    const dMin=snapMin((e.touches[0].clientY-sy0)/HOUR_PX*60-(act.startMin-START_HOUR*60));
+    act.duration=Math.max(15,dMin);
+    block.style.height=Math.max(act.duration/60*HOUR_PX,20)+'px';
+    block.querySelector('.act-time').textContent=`${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}`;
+  },{passive:false});
+  handle.addEventListener('touchend',()=>{ clearTimeout(resizeLp); handle.style.background=''; if(resizeReady){saveActivities();renderActivities();} resizeReady=false; });
+  handle.addEventListener('touchcancel',()=>{ clearTimeout(resizeLp); handle.style.background=''; resizeReady=false; });
 }
 
 function hideAllPreviews() { document.querySelectorAll('.snap-indicator').forEach(e=>e.style.display='none'); document.querySelectorAll('.drag-preview').forEach(e=>e.style.display='none'); }
