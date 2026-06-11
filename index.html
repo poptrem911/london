@@ -133,12 +133,23 @@
   .footer span { font-size: 12px; color: #70757a; }
 
   @media (max-width: 768px) {
-    .day-column { min-width: 100px; }
+    .header { padding: 6px 12px; }
     .header h1 { font-size: 16px; }
-    .activity-block { font-size: 11px; padding: 3px 6px; }
-    .footer { gap: 12px; flex-wrap: wrap; }
-    .notes-editor-wrap { padding: 16px; }
-    .todo-view { padding: 16px; }
+    .header-subtitle { display: none; }
+    #actCount { display: none; }
+    .tabs { padding: 0 4px; }
+    .tab { padding: 6px 10px; font-size: 12px; }
+    .day-header { padding: 3px 0 2px; }
+    .day-header .day-name { font-size: 9px; }
+    .day-header .day-number { font-size: 16px; margin-top: 0; }
+    .time-gutter { width: 32px; }
+    .time-gutter .time-label { font-size: 8px; padding-right: 3px; }
+    .day-column { min-width: 58px; }
+    .activity-block { font-size: 11px; padding: 3px 5px; }
+    .resize-handle { height: 16px; }
+    .footer { display: none; }
+    .todo-view { padding: 12px 16px; overflow-y: scroll; -webkit-overflow-scrolling: touch; }
+    .notes-editor-wrap { padding: 12px 16px; overflow-y: scroll; -webkit-overflow-scrolling: touch; }
   }
 </style>
 </head>
@@ -549,14 +560,50 @@ function setupDrag(block,act,origSlots) {
     };
     document.addEventListener('mousemove',onMove); document.addEventListener('mouseup',onUp);
   });
-  // Touch
-  let td=false,tsx,tsy;
-  block.addEventListener('touchstart',e=>{ if(e.target.classList.contains('resize-handle'))return; td=false; tsx=e.touches[0].clientX; tsy=e.touches[0].clientY; const br=block.getBoundingClientRect(); dragOffsetMin=(e.touches[0].clientY-br.top)/HOUR_PX*60; },{passive:true});
-  block.addEventListener('touchmove',e=>{
-    if(!td&&(Math.abs(e.touches[0].clientX-tsx)>8||Math.abs(e.touches[0].clientY-tsy)>8)){td=true;block.style.opacity='0.3';}
-    if(td){ e.preventDefault(); hideAllPreviews(); const el=document.elementFromPoint(e.touches[0].clientX,e.touches[0].clientY); if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=e.touches[0].clientY-r.top-(dragOffsetMin/60*HOUR_PX); const sn=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); const sl=ts.querySelector('.snap-indicator'); sl.style.display='block'; sl.style.top=minToY(sn)+'px'; sl.querySelector('.snap-time-label').textContent=minToTime(sn); const pv=ts.querySelector('.drag-preview'); pv.style.display='block'; pv.style.top=minToY(sn)+'px'; pv.style.height=(act.duration/60*HOUR_PX)+'px'; } } }
-  },{passive:false});
-  block.addEventListener('touchend',e=>{ hideAllPreviews(); if(td){ block.style.opacity='1'; const t=e.changedTouches[0],el=document.elementFromPoint(t.clientX,t.clientY); if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=t.clientY-r.top-(dragOffsetMin/60*HOUR_PX); act.date=ts.dataset.date; act.startMin=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); saveActivities(); renderActivities(); } } td=false; } else { openModal(act.id); } });
+  // Touch — lång tryckning (450ms) aktiverar drag, kort tryck = redigera
+  let td=false, tdReady=false, tsx, tsy, lpTimer=null;
+  block.addEventListener('touchstart', e => {
+    if (e.target.classList.contains('resize-handle')) return;
+    td=false; tdReady=false;
+    tsx=e.touches[0].clientX; tsy=e.touches[0].clientY;
+    const br=block.getBoundingClientRect();
+    dragOffsetMin=(e.touches[0].clientY-br.top)/HOUR_PX*60;
+    lpTimer=setTimeout(()=>{
+      tdReady=true;
+      block.style.transform='scale(1.04)';
+      block.style.boxShadow='0 8px 24px rgba(0,0,0,0.25)';
+      block.style.zIndex='50';
+      if(navigator.vibrate) navigator.vibrate(40);
+    }, 450);
+  }, {passive:true});
+
+  block.addEventListener('touchmove', e => {
+    const dx=Math.abs(e.touches[0].clientX-tsx), dy=Math.abs(e.touches[0].clientY-tsy);
+    if (!tdReady) {
+      if (dx>10||dy>10) { clearTimeout(lpTimer); } // scrollning — avbryt lång tryckning
+      return;
+    }
+    e.preventDefault(); td=true;
+    hideAllPreviews();
+    const el=document.elementFromPoint(e.touches[0].clientX,e.touches[0].clientY);
+    if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=e.touches[0].clientY-r.top-(dragOffsetMin/60*HOUR_PX); const sn=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); const sl=ts.querySelector('.snap-indicator'); sl.style.display='block'; sl.style.top=minToY(sn)+'px'; sl.querySelector('.snap-time-label').textContent=minToTime(sn); const pv=ts.querySelector('.drag-preview'); pv.style.display='block'; pv.style.top=minToY(sn)+'px'; pv.style.height=(act.duration/60*HOUR_PX)+'px'; } }
+  }, {passive:false});
+
+  block.addEventListener('touchend', e => {
+    clearTimeout(lpTimer);
+    block.style.transform=''; block.style.boxShadow=''; block.style.zIndex='';
+    hideAllPreviews();
+    if(td){
+      const t=e.changedTouches[0],el=document.elementFromPoint(t.clientX,t.clientY);
+      if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=t.clientY-r.top-(dragOffsetMin/60*HOUR_PX); act.date=ts.dataset.date; act.startMin=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); saveActivities(); renderActivities(); } }
+      td=false;
+    } else if(!tdReady) {
+      openModal(act.id);
+    }
+    tdReady=false;
+  });
+
+  block.addEventListener('touchcancel', ()=>{ clearTimeout(lpTimer); block.style.transform=''; block.style.boxShadow=''; block.style.zIndex=''; td=false; tdReady=false; hideAllPreviews(); });
 }
 
 function setupResize(block,act) {
