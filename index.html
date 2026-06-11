@@ -535,7 +535,23 @@ function renderActivities() {
     block.style.left=`calc(${leftPct}% + ${GAP}px)`; block.style.right=`calc(${rightPct}% + ${GAP}px)`; block.style.width='auto';
     block.style.background=act.color; block.style.color='#fff';
     block.innerHTML=`<div class="act-title">${act.title}</div><div class="act-time">${minToTime(act.startMin)}–${minToTime(act.startMin+act.duration)}</div>${height>50&&act.location?`<div class="act-location">📍 ${act.location.split(',')[0]}</div>`:''}<div class="resize-handle"></div>`;
-    block.addEventListener('click',e=>{ e.stopPropagation(); if(e.target.classList.contains('resize-handle')||block.dataset.wasDragged==='true')return; openModal(act.id); });
+    // Desktop: enkelklick. Mobil: dubbeltapp.
+    let lastTap=0;
+    block.addEventListener('click',e=>{
+      e.stopPropagation();
+      if(e.target.classList.contains('resize-handle')||block.dataset.wasDragged==='true'||block.dataset.wasResized==='true')return;
+      if('ontouchstart' in window) return; // hanteras av touchend
+      openModal(act.id);
+    });
+    block.addEventListener('touchend',e=>{
+      if(block.dataset.wasResized==='true'){ block.dataset.wasResized='false'; return; }
+      if(block.dataset.wasDragged==='true') return;
+      if(!tdReady && !td){
+        const now=Date.now();
+        if(now-lastTap<350){ openModal(act.id); lastTap=0; }
+        else { lastTap=now; }
+      }
+    });
     setupDrag(block,act,slots);
     setupResize(block,act);
     slots.appendChild(block);
@@ -618,8 +634,6 @@ function setupDrag(block,act,origSlots) {
       const t=e.changedTouches[0],el=document.elementFromPoint(t.clientX,t.clientY);
       if(el){ const ts=el.closest('.day-slots'); if(ts){ const r=ts.getBoundingClientRect(),y=t.clientY-r.top-(dragOffsetMin/60*HOUR_PX); act.date=ts.dataset.date; act.startMin=Math.max(START_HOUR*60,Math.min(snapMin(START_HOUR*60+(y/HOUR_PX)*60),END_HOUR*60-act.duration)); saveActivities(); renderActivities(); } }
       td=false;
-    } else if(!tdReady) {
-      openModal(act.id);
     }
     tdReady=false;
   });
@@ -655,6 +669,8 @@ function setupResize(block,act) {
       handle.style.borderColor = '';
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onEnd);
+      block.dataset.wasResized = 'true';
+      setTimeout(() => { block.dataset.wasResized = 'false'; }, 300);
       saveActivities(); renderActivities();
     };
     document.addEventListener('touchmove', onMove, { passive: false });
